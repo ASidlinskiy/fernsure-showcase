@@ -1,5 +1,5 @@
-// FernSure: excerpt shared for review. Selected functions: auth before the lock, the lock, the idempotent submit, event rows, lookup, RAW writes.
-// Source: apps-script/Code.gs in the private FernSure repository, commit 6af5403.
+// FernSure: excerpt shared for review. Selected functions: auth before the lock, the lock, the idempotent submit, repeat-lead flagging, event rows, lookup, RAW writes.
+// Source: apps-script/Code.gs in the private FernSure repository, commit 154dea9.
 // Copyright (c) 2026 Alex Sidlinskiy. All rights reserved. Not licensed for reuse: see NOTICE.md.
 
 /**
@@ -13,6 +13,13 @@
  * Idempotency: one script lock serializes writers. A submission_id is looked
  * up before anything is written, and a lead row and its event row are appended
  * in the same execution, so a retried submit can't create a second lead.
+ *
+ * Repeat leads: a new submission from an email that produced a lead in the
+ * last 30 days is saved but flagged (repeat_of), and its dry-run conversion
+ * payloads are marked suppressed_repeat, so one person isn't paid for twice.
+ * Replies say only repeat: true/false. Which lead it repeats stays in the
+ * Sheet: strangers can type the same test address, and a lead_id is all
+ * activate needs.
  *
  * Literal writes: rows go through the Sheets API with valueInputOption RAW,
  * so "=1+1" stays text and ZIP 02134 keeps its leading zero.
@@ -83,7 +90,10 @@ function submitLead_(req) {
         deploy_context: existing.deploy_context, outbound: withEventTime_(outbound, existing.received_at_utc),
       }));
     }
-    return { ok: true, code: 'duplicate', created: false, lead_id: existing.lead_id, occurred_at: existing.received_at_utc };
+    return {
+      ok: true, code: 'duplicate', created: false, lead_id: existing.lead_id,
+      occurred_at: existing.received_at_utc, repeat: Boolean(existing.repeat_of),
+    };
   }
 
   const props = PropertiesService.getScriptProperties();
@@ -95,6 +105,9 @@ function submitLead_(req) {
   // The function mints a candidate lead_id. It's used only here, for a new lead; a retry gets the original.
   const leadId = isText_(req.lead_id_candidate) ? req.lead_id_candidate : Utilities.getUuid();
   const lead = leadRecord_(req, leadId, receivedAt);
+  // A new submission from an email we've seen recently is still saved, so the
+  // visitor gets a quote, but it's flagged and its conversion isn't dispatched.
+  lead.repeat_of = findRepeatOf_(leads, lead, receivedAt);
   appendRecord_(leads, lead);
   // Counted as soon as the lead row exists, so a failed event append can't leave it uncounted.
   props.setProperty('DAILY_LEAD_COUNT', JSON.stringify({ date: today, count: countToday + 1 }));
@@ -102,7 +115,48 @@ function submitLead_(req) {
     event_id: eventId, event_name: 'generate_lead', occurred_at: receivedAt,
     deploy_context: lead.deploy_context, outbound: outbound,
   }));
-  return { ok: true, code: 'created', created: true, lead_id: leadId, occurred_at: receivedAt };
+  return { ok: true, code: 'created', created: true, lead_id: leadId, occurred_at: receivedAt, repeat: Boolean(lead.repeat_of) };
+}
+
+/**
+ * Lead-level dedup, as lead buyers do it: '' unless this email (trimmed,
+ * lowercased) already has a lead from the same deploy context, the most
+ * recent of which is at most 30 days older than this one. Then the first
+ * lead of that chain: a repeat never points at another repeat. "Most recent"
+ * goes by received_at_utc, not row position, so sorting the tab can't change
+ * the answer, and a preview test sharing the production Sheet can't flag a
+ * production lead. Not the same as a duplicate submission, which is one
+ * request arriving twice and never gets a second row.
+ */
+function findRepeatOf_(table, lead, receivedAt) {
+  const key = normalizeEmail_(lead.email);
+  const lastRow = table.sheet.getLastRow();
+  if (!key || lastRow < 2) return '';
+  const column = function (h) {
+    return table.sheet.getRange(2, table.headers.indexOf(h) + 1, lastRow - 1, 1).getValues();
+  };
+  const emails = column('email');
+  const times = column('received_at_utc');
+  const contexts = column('deploy_context');
+  let newest = -1;
+  let newestAt = -Infinity;
+  for (let i = 0; i < emails.length; i++) {
+    if (normalizeEmail_(emails[i][0]) !== key || String(contexts[i][0]) !== lead.deploy_context) continue;
+    // An unparseable time is NaN, which never compares true, so that row is skipped.
+    const at = Date.parse(String(times[i][0]));
+    if (at >= newestAt) {
+      newest = i;
+      newestAt = at;
+    }
+  }
+  if (newest === -1 || !(Date.parse(receivedAt) - newestAt <= REPEAT_WINDOW_MS)) return '';
+  const row = table.sheet.getRange(newest + 2, 1, 1, table.headers.length).getValues()[0];
+  const cell = function (h) { return String(row[table.headers.indexOf(h)]); };
+  return cell('repeat_of') || cell('lead_id');
+}
+
+function normalizeEmail_(v) {
+  return String(v == null ? '' : v).trim().toLowerCase();
 }
 
 // ... (lines omitted) ...
@@ -117,7 +171,8 @@ function eventRecord_(lead, event) {
     value_cents: Number(lead.total_cents),
     currency: CURRENCY,
     deploy_context: event.deploy_context,
-    dispatch_status: event.outbound ? 'dry_run' : 'none',
+    // A repeat lead keeps its payloads for the record, marked as not to be sent.
+    dispatch_status: event.outbound ? (lead.repeat_of ? 'suppressed_repeat' : 'dry_run') : 'none',
     outbound_json: event.outbound ? JSON.stringify(event.outbound) : '',
   };
   TRACKING_KEYS.forEach(function (key) {

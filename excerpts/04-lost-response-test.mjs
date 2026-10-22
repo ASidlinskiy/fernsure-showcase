@@ -1,5 +1,5 @@
-// FernSure: excerpt shared for review. The setup and two of the 29 tests in this file; some imports serve the others. Test helpers are not included.
-// Source: test/lead.test.mjs in the private FernSure repository, commit 6af5403.
+// FernSure: excerpt shared for review. The setup and two of the 31 tests in this file; some imports serve the others. Test helpers are not included.
+// Source: test/lead.test.mjs in the private FernSure repository, commit 154dea9.
 // Copyright (c) 2026 Alex Sidlinskiy. All rights reserved. Not licensed for reuse: see NOTICE.md.
 
 import { test } from 'node:test';

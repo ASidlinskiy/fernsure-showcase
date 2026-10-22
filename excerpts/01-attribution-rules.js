@@ -1,5 +1,5 @@
 // FernSure: excerpt shared for review. Complete file. pickTrackingParams (the 19-key allowlist) lives in tracking-keys.js, not included.
-// Source: src/js/core/attribution.js in the private FernSure repository, commit 6af5403.
+// Source: src/js/core/attribution.js in the private FernSure repository, commit 154dea9.
 // Copyright (c) 2026 Alex Sidlinskiy. All rights reserved. Not licensed for reuse: see NOTICE.md.
 
 // @ts-check

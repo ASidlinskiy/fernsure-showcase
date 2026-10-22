@@ -1,5 +1,5 @@
 // FernSure: excerpt shared for review. Complete file. The Netlify function entry point that wraps it is a few lines of route config.
-// Source: netlify/lib/go-handler.mjs in the private FernSure repository, commit 6af5403.
+// Source: netlify/lib/go-handler.mjs in the private FernSure repository, commit 154dea9.
 // Copyright (c) 2026 Alex Sidlinskiy. All rights reserved. Not licensed for reuse: see NOTICE.md.
 
 // @ts-check
